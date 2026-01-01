@@ -1,6 +1,8 @@
 #include "mathlib.h"
 #include <stdexcept>
 
+// Implementation of the mathlib functions
+
 namespace mathlib {
     double square(double x) {
         return x * x;
