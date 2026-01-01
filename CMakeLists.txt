@@ -8,8 +8,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_library(mathlib src/mathlib.cpp)
 target_include_directories(mathlib PUBLIC src)
 
-# Tests
+# Testing
 enable_testing()
-add_executable(test_basic tests/test_basic.cpp)
-target_link_libraries(test_basic mathlib)
-add_test(NAME BasicTest COMMAND test_basic)
+
+# Add tests subdirectory
+add_subdirectory(tests)
