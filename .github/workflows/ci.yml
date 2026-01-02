@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [ main ]
 
+# Add permissions at workflow level
+permissions:
+  contents: read
+  pull-requests: write  # Allow writing comments to PRs
+  issues: write         # Allow writing to issues (PRs are issues)
+
 jobs:
   # Main build, test, and benchmark job
   build-test-benchmark:
@@ -118,7 +124,7 @@ jobs:
     - name: Run benchmarks
       if: runner.os == 'Linux' && matrix.compiler == 'gcc'
       run: |
-        ./build/benchmarks/mathlib_benchmarks \
+        ./build/bin/mathlib_benchmarks \
           --benchmark_format=json \
           --benchmark_out=benchmark_results.json \
           --benchmark_repetitions=3 \
@@ -158,6 +164,12 @@ jobs:
     needs: build-test-benchmark
     if: github.event_name == 'pull_request'
     
+    # Ensure this job has the necessary permissions
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -193,23 +205,37 @@ jobs:
           ./current/benchmark_results.json \
           --threshold 1.20 \
           --warning-threshold 1.10 \
-          | tee comparison_report.txt
-      continue-on-error: true
+          > comparison_report.txt 2>&1 || true
     
     # Post comparison as PR comment
     - name: Comment PR with benchmark results
       if: hashFiles('./baseline/baseline_main.json') != ''
       uses: actions/github-script@v7
       with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
         script: |
           const fs = require('fs');
-          const report = fs.readFileSync('comparison_report.txt', 'utf8');
+          
+          let report = '';
+          try {
+            report = fs.readFileSync('comparison_report.txt', 'utf8');
+          } catch (err) {
+            report = 'Error reading comparison report: ' + err.message;
+          }
+          
+          // Truncate if too long (GitHub has a limit)
+          const maxLength = 65000;
+          if (report.length > maxLength) {
+            report = report.substring(0, maxLength) + '\n\n... (truncated)';
+          }
+          
+          const body = '## 📊 Performance Benchmark Results\n\n```\n' + report + '\n```';
           
           github.rest.issues.createComment({
             issue_number: context.issue.number,
             owner: context.repo.owner,
             repo: context.repo.repo,
-            body: '## 📊 Performance Benchmark Results\n\n```\n' + report + '\n```'
+            body: body
           });
     
     # If no baseline, just show current results
@@ -217,5 +243,31 @@ jobs:
       if: hashFiles('./baseline/baseline_main.json') == ''
       run: |
         echo "No baseline found - this is likely the first benchmark run."
-        echo "Current benchmark results:"
-        cat ./current/benchmark_results.json | python3 -m json.tool
+        echo "Current benchmark results will be saved as baseline when this PR is merged."
+        if [ -f ./current/benchmark_results.json ]; then
+          echo ""
+          echo "Current benchmarks:"
+          python3 -c "import json; data = json.load(open('./current/benchmark_results.json')); print('\n'.join([f\"{b['name']}: {b.get('cpu_time', b.get('real_time', 0)):.2f} {b.get('time_unit', 'ns')}\" for b in data.get('benchmarks', []) if 'BigO' not in b.get('name', '') and 'RMS' not in b.get('name', '')]))"
+        fi
+    
+    - name: Comment PR - no baseline
+      if: hashFiles('./baseline/baseline_main.json') == ''
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const body = `## 📊 Performance Benchmark Results
+          
+          ℹ️ **No baseline found** - this is likely the first benchmark run.
+          
+          Current benchmark results will be saved as baseline when this PR is merged to main.
+          Subsequent PRs will show performance comparisons against this baseline.
+          
+          ✅ Benchmarks ran successfully and will establish the baseline.`;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: body
+          });
