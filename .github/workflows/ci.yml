@@ -1,4 +1,4 @@
-name: Multi-Platform CI with ccache
+name: CI with Testing and Benchmarks
 
 on:
   push:
@@ -7,7 +7,8 @@ on:
     branches: [ main ]
 
 jobs:
-  build-and-test:
+  # Main build, test, and benchmark job
+  build-test-benchmark:
     name: ${{ matrix.os }} - ${{ matrix.compiler }}
     runs-on: ${{ matrix.os }}
     
@@ -46,8 +47,18 @@ jobs:
       if: runner.os != 'Windows'
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: ${{ runner.os }}-${{ matrix.compiler }}
+        key: ${{ runner.os }}-${{ matrix.compiler }}-bench
         max-size: 500M
+    
+    # Cache CMake build dependencies (Catch2, Google Benchmark)
+    - name: Cache CMake dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          build/_deps
+        key: ${{ runner.os }}-cmake-deps-${{ hashFiles('**/CMakeLists.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-cmake-deps-
     
     # Set up compiler for Linux
     - name: Set up compiler (Linux)
@@ -80,19 +91,131 @@ jobs:
         echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> $GITHUB_ENV
         echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> $GITHUB_ENV
     
-    # Configure CMake
+    # Configure CMake with benchmarks enabled
     - name: Configure CMake
-      run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_BENCHMARKS=ON
     
     # Build the project
     - name: Build
       run: cmake --build build --config Release
     
-    # Run tests
+    # Run tests with verbose output
     - name: Run tests
-      run: ctest --test-dir build --build-config Release --output-on-failure
+      run: ctest --test-dir build --build-config Release --output-on-failure --verbose
     
-    # Show ccache statistics (useful for monitoring cache effectiveness)
+    # Run tests with Catch2 reporter for detailed output
+    - name: Run Catch2 tests with detailed output
+      if: runner.os != 'Windows'
+      run: ./build/tests/tests --reporter console
+      continue-on-error: true
+    
+    - name: Run Catch2 tests with detailed output (Windows)
+      if: runner.os == 'Windows'
+      run: .\build\tests\Release\tests.exe --reporter console
+      continue-on-error: true
+    
+    # Run benchmarks (only on Linux with GCC for consistency)
+    - name: Run benchmarks
+      if: runner.os == 'Linux' && matrix.compiler == 'gcc'
+      run: |
+        ./build/bin/mathlib_benchmarks \
+          --benchmark_format=json \
+          --benchmark_out=benchmark_results.json \
+          --benchmark_repetitions=3 \
+          --benchmark_report_aggregates_only=true
+    
+    # Upload benchmark results as artifact
+    - name: Upload benchmark results
+      if: runner.os == 'Linux' && matrix.compiler == 'gcc'
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results-${{ github.sha }}
+        path: benchmark_results.json
+    
+    # Store baseline for main branch
+    - name: Store baseline (main branch only)
+      if: runner.os == 'Linux' && matrix.compiler == 'gcc' && github.ref == 'refs/heads/main'
+      run: |
+        mkdir -p benchmark_baselines
+        cp benchmark_results.json benchmark_baselines/baseline_main.json
+    
+    - name: Upload baseline
+      if: runner.os == 'Linux' && matrix.compiler == 'gcc' && github.ref == 'refs/heads/main'
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-baseline
+        path: benchmark_baselines/baseline_main.json
+    
+    # Show ccache statistics
     - name: ccache statistics
       if: runner.os != 'Windows'
       run: ccache -s
+
+  # Compare benchmarks on pull requests
+  compare-benchmarks:
+    name: Compare Performance
+    runs-on: ubuntu-latest
+    needs: build-test-benchmark
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+    
+    # Download current benchmark results
+    - name: Download current benchmark results
+      uses: actions/download-artifact@v4
+      with:
+        name: benchmark-results-${{ github.sha }}
+        path: ./current
+    
+    # Try to get baseline from main branch
+    - name: Download baseline from main
+      uses: dawidd6/action-download-artifact@v3
+      with:
+        workflow: ci.yml
+        branch: main
+        name: benchmark-baseline
+        path: ./baseline
+      continue-on-error: true
+    
+    # Compare benchmarks if we have a baseline
+    - name: Compare benchmarks
+      if: hashFiles('./baseline/baseline_main.json') != ''
+      run: |
+        python3 scripts/compare_benchmarks.py \
+          ./baseline/baseline_main.json \
+          ./current/benchmark_results.json \
+          --threshold 1.20 \
+          --warning-threshold 1.10 \
+          | tee comparison_report.txt
+      continue-on-error: true
+    
+    # Post comparison as PR comment
+    - name: Comment PR with benchmark results
+      if: hashFiles('./baseline/baseline_main.json') != ''
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const report = fs.readFileSync('comparison_report.txt', 'utf8');
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: '## 📊 Performance Benchmark Results\n\n```\n' + report + '\n```'
+          });
+    
+    # If no baseline, just show current results
+    - name: Show current results (no baseline)
+      if: hashFiles('./baseline/baseline_main.json') == ''
+      run: |
+        echo "No baseline found - this is likely the first benchmark run."
+        echo "Current benchmark results:"
+        cat ./current/benchmark_results.json | python3 -m json.tool

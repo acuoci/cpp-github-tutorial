@@ -10,6 +10,13 @@ target_include_directories(mathlib PUBLIC src)
 
 # Testing
 enable_testing()
-
-# Add tests subdirectory
 add_subdirectory(tests)
+
+# Benchmarking
+option(BUILD_BENCHMARKS "Build performance benchmarks" ON)
+if(BUILD_BENCHMARKS)
+    message(STATUS "Building benchmarks")
+    add_subdirectory(benchmarks)
+else()
+    message(STATUS "Skipping benchmarks")
+endif()
