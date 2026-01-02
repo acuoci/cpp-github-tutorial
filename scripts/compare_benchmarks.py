@@ -45,6 +45,44 @@ def format_time(value: float, unit: str) -> str:
     else:
         return f"{value:10.2f} {unit}"
 
+def should_skip_benchmark(bench: Dict) -> bool:
+    """
+    Determine if a benchmark result should be skipped.
+    Returns True for aggregate results, complexity analysis, etc.
+    """
+    name = bench.get('name', '')
+    run_type = bench.get('run_type', '')
+    
+    # Skip aggregate results (mean, median, stddev)
+    if any(suffix in name for suffix in ['_mean', '_median', '_stddev', '_cv']):
+        return True
+    
+    # Skip complexity analysis results (BigO, RMS)
+    if 'BigO' in name or 'RMS' in name:
+        return True
+    
+    # Skip if run_type indicates it's an aggregate
+    if run_type == 'aggregate':
+        return True
+    
+    return False
+
+def get_benchmark_time(bench: Dict) -> float:
+    """Extract CPU time from benchmark result, handling different formats."""
+    # Try different possible keys
+    if 'cpu_time' in bench:
+        return bench['cpu_time']
+    elif 'real_time' in bench:
+        return bench['real_time']
+    elif 'time' in bench:
+        return bench['time']
+    else:
+        raise KeyError("Could not find time metric in benchmark result")
+
+def get_time_unit(bench: Dict) -> str:
+    """Extract time unit from benchmark result."""
+    return bench.get('time_unit', 'ns')
+
 def compare_benchmarks(baseline_file: str, current_file: str, 
                       threshold: float = 1.20,
                       warning_threshold: float = 1.10) -> Tuple[bool, str]:
@@ -52,8 +90,8 @@ def compare_benchmarks(baseline_file: str, current_file: str,
     Compare two benchmark results.
     
     Args:
-        baseline_file: Path to baseline benchmark JSON
-        current_file: Path to current benchmark JSON
+        baseline_file: Path to baseline benchmark JSON file
+        current_file: Path to current benchmark JSON file
         threshold: Regression threshold (1.20 = 20% slower triggers alert)
         warning_threshold: Warning threshold (1.10 = 10% slower shows warning)
     
@@ -63,8 +101,24 @@ def compare_benchmarks(baseline_file: str, current_file: str,
     baseline = load_benchmark(baseline_file)
     current = load_benchmark(current_file)
     
+    # Handle the benchmarks array
+    baseline_benchmarks = baseline.get('benchmarks', [])
+    current_benchmarks = current.get('benchmarks', [])
+    
+    if not baseline_benchmarks:
+        print("Error: No benchmarks found in baseline file")
+        sys.exit(1)
+    if not current_benchmarks:
+        print("Error: No benchmarks found in current file")
+        sys.exit(1)
+    
     # Create lookup for baseline benchmarks
-    baseline_map = {b['name']: b for b in baseline['benchmarks']}
+    baseline_map = {}
+    for b in baseline_benchmarks:
+        if should_skip_benchmark(b):
+            continue
+        name = b.get('name', '')
+        baseline_map[name] = b
     
     has_regression = False
     has_warning = False
@@ -75,13 +129,25 @@ def compare_benchmarks(baseline_file: str, current_file: str,
     new_benchmarks = []
     
     # Analyze each current benchmark
-    for curr_bench in current['benchmarks']:
-        name = curr_bench['name']
-        curr_time = curr_bench['cpu_time']
-        time_unit = curr_bench.get('time_unit', 'ns')
+    for curr_bench in current_benchmarks:
+        if should_skip_benchmark(curr_bench):
+            continue
+            
+        name = curr_bench.get('name', '')
+        
+        try:
+            curr_time = get_benchmark_time(curr_bench)
+            time_unit = get_time_unit(curr_bench)
+        except KeyError:
+            # Silently skip benchmarks without time metrics
+            continue
         
         if name in baseline_map:
-            base_time = baseline_map[name]['cpu_time']
+            try:
+                base_time = get_benchmark_time(baseline_map[name])
+            except KeyError:
+                continue
+                
             ratio = curr_time / base_time
             change_pct = (ratio - 1.0) * 100
             
@@ -126,7 +192,7 @@ def compare_benchmarks(baseline_file: str, current_file: str,
     if regressions:
         report_lines.append("🔴 PERFORMANCE REGRESSIONS (>{:.0f}% slower):".format((threshold-1)*100))
         report_lines.append("-" * 80)
-        for r in regressions:
+        for r in sorted(regressions, key=lambda x: x['change_pct'], reverse=True):
             report_lines.append(f"  {r['name']}")
             report_lines.append(f"    Baseline: {format_time(r['baseline'], r['unit'])}")
             report_lines.append(f"    Current:  {format_time(r['current'], r['unit'])}")
@@ -137,7 +203,7 @@ def compare_benchmarks(baseline_file: str, current_file: str,
     if warnings:
         report_lines.append("🟡 PERFORMANCE WARNINGS (>{:.0f}% slower):".format((warning_threshold-1)*100))
         report_lines.append("-" * 80)
-        for w in warnings:
+        for w in sorted(warnings, key=lambda x: x['change_pct'], reverse=True):
             report_lines.append(f"  {w['name']}")
             report_lines.append(f"    Baseline: {format_time(w['baseline'], w['unit'])}")
             report_lines.append(f"    Current:  {format_time(w['current'], w['unit'])}")
@@ -148,7 +214,7 @@ def compare_benchmarks(baseline_file: str, current_file: str,
     if improvements:
         report_lines.append("🟢 PERFORMANCE IMPROVEMENTS (>10% faster):")
         report_lines.append("-" * 80)
-        for i in improvements:
+        for i in sorted(improvements, key=lambda x: x['change_pct']):
             report_lines.append(f"  {i['name']}")
             report_lines.append(f"    Baseline: {format_time(i['baseline'], i['unit'])}")
             report_lines.append(f"    Current:  {format_time(i['current'], i['unit'])}")
@@ -163,6 +229,16 @@ def compare_benchmarks(baseline_file: str, current_file: str,
             report_lines.append(f"  {n['name']}")
             report_lines.append(f"    Time: {format_time(n['time'], n['unit'])}")
             report_lines.append("")
+    
+    # Report unchanged (optional - comment out if too verbose)
+    if unchanged and len(unchanged) <= 10:  # Only show if not too many
+        report_lines.append("⚪ UNCHANGED (within ±10%):")
+        report_lines.append("-" * 80)
+        for u in unchanged[:10]:  # Limit to 10
+            report_lines.append(f"  {u['name']}: {u['change_pct']:+.1f}%")
+        if len(unchanged) > 10:
+            report_lines.append(f"  ... and {len(unchanged) - 10} more")
+        report_lines.append("")
     
     # Summary statistics
     report_lines.append("=" * 80)
