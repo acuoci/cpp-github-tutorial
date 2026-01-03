@@ -1,0 +1,52 @@
+# Codecov configuration file
+# See: https://docs.codecov.com/docs/codecov-yaml
+
+# Coverage targets
+coverage:
+  status:
+    # Overall project coverage
+    project:
+      default:
+        target: 80%              # Minimum coverage percentage
+        threshold: 2%            # Allow up to 2% decrease
+        base: auto               # Compare against base branch
+        
+    # Coverage of changed code (in PRs)
+    patch:
+      default:
+        target: 85%              # New code should be well-tested
+        threshold: 5%            # Be a bit more lenient for patches
+        
+  # How soon we expect coverage to be uploaded
+  range: 50..100                 # Coverage between 50-100% is acceptable
+  round: down                    # Round coverage down
+  precision: 2                   # Two decimal places
+
+# Comment settings (on PRs)
+comment:
+  layout: "header, diff, files, footer"
+  behavior: default              # Update existing comment
+  require_changes: false         # Comment even if coverage unchanged
+  require_base: false            # Comment even if no base coverage
+  require_head: true             # Only comment if head coverage exists
+
+# Ignore certain files/directories
+ignore:
+  - "tests/**/*"                 # Don't count test files
+  - "benchmarks/**/*"            # Don't count benchmark files
+  - "build/**/*"                 # Build artifacts
+  - "**/*.h"                     # Optional: ignore headers (debatable)
+
+# Which files to include
+# (By default, all files are included)
+
+# GitHub checks
+github_checks:
+  annotations: true              # Annotate files with coverage info
+  
+# Flags (for tracking different types of tests)
+flags:
+  unittests:
+    paths:
+      - src/
+    carryforward: true           # Use previous coverage if upload fails
