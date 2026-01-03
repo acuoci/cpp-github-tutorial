@@ -2,8 +2,8 @@
 #define MATHLIB_H
 
 namespace mathlib {
-    double square(double x);
-    double factorial(int n);
-}
+double square(double x);
+double factorial(int n);
+}  // namespace mathlib
 
 #endif
