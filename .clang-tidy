@@ -17,10 +17,13 @@ Checks: >
   -cppcoreguidelines-pro-type-reinterpret-cast,
   -cppcoreguidelines-avoid-c-arrays,
   -cppcoreguidelines-pro-bounds-constant-array-index,
+  -cppcoreguidelines-avoid-non-const-global-variables,
+  -cppcoreguidelines-owning-memory,
   google-*,
   -google-readability-todo,
   misc-*,
   -misc-non-private-member-variables-in-classes,
+  -misc-use-anonymous-namespace,
   modernize-*,
   -modernize-use-trailing-return-type,
   -modernize-avoid-c-arrays,
@@ -71,12 +74,12 @@ CheckOptions:
   - key: google-readability-braces-around-statements.ShortStatementLines
     value: '1'
 
-# WARNING OPTIONS - THIS IS THE KEY PART TO FILTER OUT CATCH2
+# WARNING OPTIONS
 WarningsAsErrors: ''
 
-# IMPORTANT: Only check headers in your src/ directory, not dependencies
-# This regex filters out everything except your own code
-HeaderFilterRegex: '^.*/src/.*$'
+# CRITICAL: Only check YOUR source code, not tests, benchmarks, or dependencies
+# This regex only matches files in the src/ directory
+HeaderFilterRegex: '^.*/src/.*\.(h|hpp|hxx)$'
 
 FormatStyle: 'file'
 

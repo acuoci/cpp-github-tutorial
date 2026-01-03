@@ -100,7 +100,7 @@ jobs:
     - name: Run benchmarks
       if: runner.os == 'Linux' && matrix.compiler == 'gcc'
       run: |
-        ./build/benchmarks/mathlib_benchmarks \
+        ./build/bin/mathlib_benchmarks \
           --benchmark_format=json \
           --benchmark_out=benchmark_results.json \
           --benchmark_repetitions=3 \
