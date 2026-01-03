@@ -1,0 +1,1 @@
+genhtml coverage_filtered.info --output-directory coverage_html --branch-coverage --title 'MathLib Coverage Report' --legend --demangle-cpp

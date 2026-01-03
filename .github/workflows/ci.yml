@@ -1,4 +1,4 @@
-name: CI with Testing and Benchmarks
+name: CI with Testing, Benchmarks, and Coverage
 
 on:
   push:
@@ -6,11 +6,10 @@ on:
   pull_request:
     branches: [ main ]
 
-# Add permissions at workflow level
 permissions:
   contents: read
-  pull-requests: write  # Allow writing comments to PRs
-  issues: write         # Allow writing to issues (PRs are issues)
+  pull-requests: write
+  issues: write
 
 jobs:
   # Main build, test, and benchmark job
@@ -36,19 +35,16 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    # Install ccache on Linux
     - name: Install ccache (Linux)
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
         sudo apt-get install -y ccache
     
-    # Install ccache on macOS
     - name: Install ccache (macOS)
       if: runner.os == 'macOS'
       run: brew install ccache
     
-    # Setup ccache with automatic caching
     - name: Setup ccache
       if: runner.os != 'Windows'
       uses: hendrikmuhs/ccache-action@v1.2
@@ -56,7 +52,6 @@ jobs:
         key: ${{ runner.os }}-${{ matrix.compiler }}-bench
         max-size: 500M
     
-    # Cache CMake build dependencies (Catch2, Google Benchmark)
     - name: Cache CMake dependencies
       uses: actions/cache@v4
       with:
@@ -66,7 +61,6 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-cmake-deps-
     
-    # Set up compiler for Linux
     - name: Set up compiler (Linux)
       if: runner.os == 'Linux'
       run: |
@@ -77,11 +71,9 @@ jobs:
           echo "CC=clang" >> $GITHUB_ENV
           echo "CXX=clang++" >> $GITHUB_ENV
         fi
-        # Enable ccache for CMake
         echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> $GITHUB_ENV
         echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> $GITHUB_ENV
     
-    # Set up compiler for macOS
     - name: Set up compiler (macOS)
       if: runner.os == 'macOS'
       run: |
@@ -93,44 +85,27 @@ jobs:
           echo "CC=clang" >> $GITHUB_ENV
           echo "CXX=clang++" >> $GITHUB_ENV
         fi
-        # Enable ccache for CMake
         echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache" >> $GITHUB_ENV
         echo "CMAKE_C_COMPILER_LAUNCHER=ccache" >> $GITHUB_ENV
     
-    # Configure CMake with benchmarks enabled
     - name: Configure CMake
       run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_BENCHMARKS=ON
     
-    # Build the project
     - name: Build
       run: cmake --build build --config Release
     
-    # Run tests with verbose output
     - name: Run tests
       run: ctest --test-dir build --build-config Release --output-on-failure --verbose
     
-    # Run tests with Catch2 reporter for detailed output
-    - name: Run Catch2 tests with detailed output
-      if: runner.os != 'Windows'
-      run: ./build/tests/tests --reporter console
-      continue-on-error: true
-    
-    - name: Run Catch2 tests with detailed output (Windows)
-      if: runner.os == 'Windows'
-      run: .\build\tests\Release\tests.exe --reporter console
-      continue-on-error: true
-    
-    # Run benchmarks (only on Linux with GCC for consistency)
     - name: Run benchmarks
       if: runner.os == 'Linux' && matrix.compiler == 'gcc'
       run: |
-        ./build/benchmarks/mathlib_benchmarks \
+        ./build/bin/mathlib_benchmarks \
           --benchmark_format=json \
           --benchmark_out=benchmark_results.json \
           --benchmark_repetitions=3 \
           --benchmark_report_aggregates_only=true
     
-    # Upload benchmark results as artifact
     - name: Upload benchmark results
       if: runner.os == 'Linux' && matrix.compiler == 'gcc'
       uses: actions/upload-artifact@v4
@@ -138,7 +113,6 @@ jobs:
         name: benchmark-results-${{ github.sha }}
         path: benchmark_results.json
     
-    # Store baseline for main branch
     - name: Store baseline (main branch only)
       if: runner.os == 'Linux' && matrix.compiler == 'gcc' && github.ref == 'refs/heads/main'
       run: |
@@ -152,10 +126,128 @@ jobs:
         name: benchmark-baseline
         path: benchmark_baselines/baseline_main.json
     
-    # Show ccache statistics
     - name: ccache statistics
       if: runner.os != 'Windows'
       run: ccache -s
+
+  # Separate job for code coverage (Linux GCC only)
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcovr lcov
+    
+    - name: Configure CMake with coverage
+      run: |
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DENABLE_COVERAGE=ON \
+          -DBUILD_BENCHMARKS=OFF
+      env:
+        CC: gcc
+        CXX: g++
+    
+    - name: Build with coverage
+      run: cmake --build build
+    
+    - name: Run tests
+      run: ctest --test-dir build --output-on-failure
+    
+    - name: Generate coverage report (lcov)
+      run: |
+        # Capture coverage data (ignore errors from dependencies)
+        lcov --capture \
+          --directory build \
+          --output-file coverage.info \
+          --ignore-errors inconsistent,mismatch,gcov \
+          --rc lcov_branch_coverage=1
+        
+        # Filter out system headers, tests, and dependencies
+        lcov --remove coverage.info \
+          '/usr/*' \
+          '*/tests/*' \
+          '*/test_*.cpp' \
+          '*/build/_deps/*' \
+          --output-file coverage_filtered.info \
+          --ignore-errors unused \
+          --rc lcov_branch_coverage=1
+        
+        # Generate HTML report
+        genhtml coverage_filtered.info \
+          --output-directory coverage_html \
+          --branch-coverage \
+          --title "MathLib Coverage Report"
+        
+        # Print summary
+        echo "Coverage Summary:"
+        lcov --summary coverage_filtered.info --rc lcov_branch_coverage=1
+    
+    - name: Generate coverage report (XML for Codecov)
+      run: |
+        gcovr --xml-pretty \
+          --exclude-unreachable-branches \
+          --print-summary \
+          --exclude 'tests/.*' \
+          --exclude 'build/_deps/.*' \
+          --output coverage.xml \
+          build
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+        verbose: true
+    
+    - name: Upload coverage HTML report
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: coverage_html/
+    
+    - name: Coverage comment
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const fs = require('fs');
+          
+          let coveragePercent = 'N/A';
+          try {
+            const coverageXml = fs.readFileSync('coverage.xml', 'utf8');
+            const match = coverageXml.match(/line-rate="([0-9.]+)"/);
+            if (match) {
+              coveragePercent = (parseFloat(match[1]) * 100).toFixed(2) + '%';
+            }
+          } catch (err) {
+            console.log('Could not read coverage data:', err);
+          }
+          
+          const body = `## 📊 Code Coverage Report
+          
+          **Coverage:** ${coveragePercent}
+          
+          View detailed coverage report in the workflow artifacts.
+          
+          Coverage data has been uploaded to Codecov for detailed analysis.`;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: body
+          });
 
   # Compare benchmarks on pull requests
   compare-benchmarks:
@@ -164,7 +256,6 @@ jobs:
     needs: build-test-benchmark
     if: github.event_name == 'pull_request'
     
-    # Ensure this job has the necessary permissions
     permissions:
       contents: read
       pull-requests: write
@@ -179,14 +270,12 @@ jobs:
       with:
         python-version: '3.x'
     
-    # Download current benchmark results
     - name: Download current benchmark results
       uses: actions/download-artifact@v4
       with:
         name: benchmark-results-${{ github.sha }}
         path: ./current
     
-    # Try to get baseline from main branch
     - name: Download baseline from main
       uses: dawidd6/action-download-artifact@v3
       with:
@@ -196,7 +285,6 @@ jobs:
         path: ./baseline
       continue-on-error: true
     
-    # Compare benchmarks if we have a baseline
     - name: Compare benchmarks
       if: hashFiles('./baseline/baseline_main.json') != ''
       run: |
@@ -207,7 +295,6 @@ jobs:
           --warning-threshold 1.10 \
           > comparison_report.txt 2>&1 || true
     
-    # Post comparison as PR comment
     - name: Comment PR with benchmark results
       if: hashFiles('./baseline/baseline_main.json') != ''
       uses: actions/github-script@v7
@@ -223,7 +310,6 @@ jobs:
             report = 'Error reading comparison report: ' + err.message;
           }
           
-          // Truncate if too long (GitHub has a limit)
           const maxLength = 65000;
           if (report.length > maxLength) {
             report = report.substring(0, maxLength) + '\n\n... (truncated)';
@@ -237,18 +323,6 @@ jobs:
             repo: context.repo.repo,
             body: body
           });
-    
-    # If no baseline, just show current results
-    - name: Show current results (no baseline)
-      if: hashFiles('./baseline/baseline_main.json') == ''
-      run: |
-        echo "No baseline found - this is likely the first benchmark run."
-        echo "Current benchmark results will be saved as baseline when this PR is merged."
-        if [ -f ./current/benchmark_results.json ]; then
-          echo ""
-          echo "Current benchmarks:"
-          python3 -c "import json; data = json.load(open('./current/benchmark_results.json')); print('\n'.join([f\"{b['name']}: {b.get('cpu_time', b.get('real_time', 0)):.2f} {b.get('time_unit', 'ns')}\" for b in data.get('benchmarks', []) if 'BigO' not in b.get('name', '') and 'RMS' not in b.get('name', '')]))"
-        fi
     
     - name: Comment PR - no baseline
       if: hashFiles('./baseline/baseline_main.json') == ''
