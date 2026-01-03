@@ -1,37 +1,35 @@
-# Fetch Catch2 from GitHub
+# Fetch Google Benchmark from GitHub
 include(FetchContent)
 
 FetchContent_Declare(
-  Catch2
-  GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-  GIT_TAG        v3.5.2  # Use a specific version
+  googlebenchmark
+  GIT_REPOSITORY https://github.com/google/benchmark.git
+  GIT_TAG        v1.8.3
 )
 
-FetchContent_MakeAvailable(Catch2)
+# Configure Google Benchmark
+set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "Disable Google Benchmark tests" FORCE)
+set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "Disable Google Benchmark install" FORCE)
 
-# Add Catch2's CMake modules to the path
-list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
+# Make Google Benchmark available
+FetchContent_MakeAvailable(googlebenchmark)
 
-# Include CTest integration
-include(CTest)
-include(Catch)
-
-# Create test executable with all test files
-add_executable(tests
-    test_main.cpp
-    test_basic.cpp
-    test_mathlib.cpp
+# Create benchmark executable
+add_executable(mathlib_benchmarks
+    benchmark_mathlib.cpp
 )
 
-# Link against our library and Catch2
-target_link_libraries(tests PRIVATE 
+# Link with our library and Google Benchmark
+target_link_libraries(mathlib_benchmarks PRIVATE
     mathlib
-    Catch2::Catch2
+    benchmark::benchmark
 )
 
-# Coverage flags are automatically inherited from mathlib
-# because we used PUBLIC in the library's target_compile_options
-# No need to add them again here!
+# Set output directory (optional, for convenience)
+set_target_properties(mathlib_benchmarks PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
 
-# Automatically discover tests
-catch_discover_tests(tests)
+# Optionally add as a CTest test (won't fail on performance regression, just runs)
+add_test(NAME benchmarks 
+         COMMAND mathlib_benchmarks --benchmark_min_time=0.1)
