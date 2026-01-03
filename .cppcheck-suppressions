@@ -1,0 +1,15 @@
+# Cppcheck suppressions file
+# Format: [error id]:[file pattern]
+
+# Suppress warnings in external dependencies
+*:*/build/_deps/*
+*:*/tests/test_*.cpp
+
+# Common false positives in test code
+unusedFunction:*/tests/*
+unmatchedSuppression:*/tests/*
+
+# Suppress specific warnings if needed (examples):
+# missingIncludeSystem
+# unusedStructMember
+# noExplicitConstructor
