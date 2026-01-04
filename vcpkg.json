@@ -10,18 +10,5 @@
     "spdlog",
     "nlohmann-json"
   ],
-  "features": {
-    "testing": {
-      "description": "Build with testing support",
-      "dependencies": [
-        "catch2"
-      ]
-    },
-    "benchmarking": {
-      "description": "Build with benchmarking support",
-      "dependencies": [
-        "benchmark"
-      ]
-    }
-  }
+  "builtin-baseline": "a42af01b72c28a8e1d7b48107b33e4f286a55ef6"
 }
