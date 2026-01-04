@@ -1,4 +1,4 @@
-name: CI with Testing, Benchmarks, Coverage, Static Analysis, and Formatting
+name: CI with Testing, Benchmarks, Coverage, Static Analysis, Formatting, and Documentation
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write # Needed for GitHub Pages deployment
   pull-requests: write
   issues: write
 
@@ -28,7 +28,7 @@ jobs:
 
       - name: Check formatting
         run: |
-          chmod +x scripts/check-format.sh
+          chmod +x ./scripts/check-format.sh
           ./scripts/check-format.sh
 
       - name: Comment on PR if formatting needed
@@ -417,6 +417,39 @@ jobs:
               body: body
             });
 
+  # Generate and deploy documentation
+  documentation:
+    name: Generate Documentation
+    runs-on: ubuntu-latest
+    # Only run on pushes to main (not on PRs)
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Doxygen and Graphviz
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y doxygen graphviz
+
+      - name: Generate documentation
+        run: |
+          echo "Generating documentation with Doxygen..."
+          doxygen Doxyfile
+          echo "Documentation generated successfully!"
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs/html
+          publish_branch: gh-pages
+          force_orphan: true
+          user_name: "github-actions[bot]"
+          user_email: "github-actions[bot]@users.noreply.github.com"
+          commit_message: "Deploy documentation - ${{ github.event.head_commit.message }}"
+
   # Compare benchmarks on pull requests
   compare-benchmarks:
     name: Compare Performance
@@ -513,33 +546,3 @@ jobs:
               repo: context.repo.repo,
               body: body
             });
-
-  # Generate and deploy documentation
-  documentation:
-    name: Generate Documentation
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Doxygen
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y doxygen graphviz
-
-      - name: Generate documentation
-        run: |
-          doxygen Doxyfile
-
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./docs/html
-          publish_branch: gh-pages
-          force_orphan: true
-          user_name: "github-actions[bot]"
-          user_email: "github-actions[bot]@users.noreply.github.com"
-          commit_message: "Deploy documentation"
