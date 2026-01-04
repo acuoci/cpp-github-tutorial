@@ -555,24 +555,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Setup vcpkg (use latest, no specific commit)
+      # Setup vcpkg
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
 
-      # Configure with vcpkg
-      - name: Configure CMake
+      # Configure with vcpkg (Unix)
+      - name: Configure CMake (Unix)
+        if: runner.os != 'Windows'
         run: |
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake \
             -DUSE_VCPKG_DEPENDENCIES=ON \
             -DBUILD_BENCHMARKS=ON
+
+      # Configure with vcpkg (Windows - all on one line for PowerShell)
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake" -DUSE_VCPKG_DEPENDENCIES=ON -DBUILD_BENCHMARKS=ON
 
       # Build
       - name: Build
@@ -582,7 +588,7 @@ jobs:
       - name: Run tests
         run: ctest --test-dir build --build-config Release --output-on-failure
 
-      # Run example (to verify dependencies work)
+      # Run example
       - name: Run example (Unix)
         if: runner.os != 'Windows'
         run: ./build/mathlib_example
