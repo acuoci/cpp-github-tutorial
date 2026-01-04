@@ -547,6 +547,7 @@ jobs:
               body: body
             });
 
+  # Build with vcpkg to demonstrate dependency management
   build-with-vcpkg:
     name: Build with vcpkg - ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -560,11 +561,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Setup vcpkg (cached for speed)
+      # Setup vcpkg (use latest, no specific commit)
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: "c8696863d371ab7f46545af73e4f1b82b6e5fcb7"
+        # Don't specify vcpkgGitCommitId - use latest
 
       # Configure with vcpkg
       - name: Configure CMake
@@ -583,10 +583,10 @@ jobs:
         run: ctest --test-dir build --build-config Release --output-on-failure
 
       # Run example (to verify dependencies work)
-      - name: Run example
-        run: ./build/mathlib_example
+      - name: Run example (Unix)
         if: runner.os != 'Windows'
+        run: ./build/mathlib_example
 
       - name: Run example (Windows)
-        run: .\build\Release\mathlib_example.exe
         if: runner.os == 'Windows'
+        run: .\build\Release\mathlib_example.exe
