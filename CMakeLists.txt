@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 
-# Set vcpkg toolchain file before project()
+# Set vcpkg toolchain file before project() if available
 if(DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
   set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
       CACHE STRING "")
@@ -19,17 +19,28 @@ option(ENABLE_COVERAGE "Enable code coverage" OFF)
 option(ENABLE_CLANG_TIDY "Enable clang-tidy checks" OFF)
 option(ENABLE_CPPCHECK "Enable cppcheck checks" OFF)
 option(ENABLE_SANITIZERS "Enable sanitizers (ASan, UBSan)" OFF)
+option(USE_VCPKG_DEPENDENCIES "Use vcpkg dependencies (fmt, spdlog, nlohmann_json)" OFF)
 
-# Find packages from vcpkg
-find_package(fmt CONFIG REQUIRED)
-find_package(spdlog CONFIG REQUIRED)
-find_package(nlohmann_json CONFIG REQUIRED)
+# Find packages from vcpkg (optional)
+if(USE_VCPKG_DEPENDENCIES)
+    message(STATUS "Using vcpkg dependencies")
+    find_package(fmt CONFIG REQUIRED)
+    find_package(spdlog CONFIG REQUIRED)
+    find_package(nlohmann_json CONFIG REQUIRED)
+    
+    message(STATUS "Found fmt: ${fmt_VERSION}")
+    message(STATUS "Found spdlog: ${spdlog_VERSION}")
+    message(STATUS "Found nlohmann_json: ${nlohmann_json_VERSION}")
+    
+    set(VCPKG_LIBS fmt::fmt spdlog::spdlog nlohmann_json::nlohmann_json)
+    set(VCPKG_SOURCES src/logger.cpp)
+else()
+    message(STATUS "Building without vcpkg dependencies")
+    set(VCPKG_LIBS)
+    set(VCPKG_SOURCES)
+endif()
 
-message(STATUS "Found fmt: ${fmt_VERSION}")
-message(STATUS "Found spdlog: ${spdlog_VERSION}")
-message(STATUS "Found nlohmann_json: ${nlohmann_json_VERSION}")
-
-# Clang-Tidy integration (ONLY for library, not tests/benchmarks)
+# Clang-Tidy integration
 if(ENABLE_CLANG_TIDY)
     find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
     if(CLANG_TIDY_EXE)
@@ -40,7 +51,7 @@ if(ENABLE_CLANG_TIDY)
     endif()
 endif()
 
-# Cppcheck integration (ONLY for library, not tests/benchmarks)
+# Cppcheck integration
 if(ENABLE_CPPCHECK)
     find_program(CPPCHECK_EXE NAMES "cppcheck")
     if(CPPCHECK_EXE)
@@ -62,20 +73,18 @@ endif()
 # Library
 add_library(mathlib 
     src/mathlib.cpp
-    src/logger.cpp
+    ${VCPKG_SOURCES}
 )
 
 target_include_directories(mathlib PUBLIC src)
 
-# Link vcpkg dependencies
-target_link_libraries(mathlib 
-    PUBLIC 
-        fmt::fmt
-        spdlog::spdlog
-        nlohmann_json::nlohmann_json
-)
+# Link vcpkg dependencies if available
+if(USE_VCPKG_DEPENDENCIES)
+    target_link_libraries(mathlib PUBLIC ${VCPKG_LIBS})
+    target_compile_definitions(mathlib PUBLIC USE_VCPKG_DEPENDENCIES)
+endif()
 
-# Apply static analysis ONLY to library
+# Apply static analysis
 if(ENABLE_CLANG_TIDY AND CLANG_TIDY_COMMAND)
     set_target_properties(mathlib PROPERTIES
         CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}"
@@ -88,21 +97,17 @@ if(ENABLE_CPPCHECK AND CPPCHECK_COMMAND)
     )
 endif()
 
-# Add coverage flags if enabled
+# Coverage
 if(ENABLE_COVERAGE)
     message(STATUS "Code coverage enabled")
     
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(mathlib PUBLIC
-            --coverage
-            -O0
-            -g
-        )
+        target_compile_options(mathlib PUBLIC --coverage -O0 -g)
         target_link_libraries(mathlib PUBLIC --coverage)
     endif()
 endif()
 
-# Add sanitizers if enabled
+# Sanitizers
 if(ENABLE_SANITIZERS)
     message(STATUS "Sanitizers enabled (ASan + UBSan)")
     
@@ -116,10 +121,7 @@ if(ENABLE_SANITIZERS)
         
         target_compile_options(mathlib PUBLIC ${SANITIZER_FLAGS})
         target_link_libraries(mathlib PUBLIC ${SANITIZER_FLAGS})
-        
-        target_compile_options(mathlib PUBLIC
-            -fno-sanitize-recover=all
-        )
+        target_compile_options(mathlib PUBLIC -fno-sanitize-recover=all)
     else()
         message(WARNING "Sanitizers requested but not supported by this compiler")
     endif()
@@ -138,6 +140,10 @@ else()
     message(STATUS "Skipping benchmarks")
 endif()
 
-# Example executable to demonstrate vcpkg dependencies
-add_executable(mathlib_example examples/example.cpp)
-target_link_libraries(mathlib_example PRIVATE mathlib)
+# Example executable (only with vcpkg)
+if(USE_VCPKG_DEPENDENCIES)
+    if(EXISTS "${CMAKE_SOURCE_DIR}/examples/example.cpp")
+        add_executable(mathlib_example examples/example.cpp)
+        target_link_libraries(mathlib_example PRIVATE mathlib)
+    endif()
+endif()

@@ -564,7 +564,6 @@ jobs:
       # Setup vcpkg (use latest, no specific commit)
       - name: Setup vcpkg
         uses: lukka/run-vcpkg@v11
-        # Don't specify vcpkgGitCommitId - use latest
 
       # Configure with vcpkg
       - name: Configure CMake
@@ -572,6 +571,7 @@ jobs:
           cmake -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake \
+            -DUSE_VCPKG_DEPENDENCIES=ON \
             -DBUILD_BENCHMARKS=ON
 
       # Build

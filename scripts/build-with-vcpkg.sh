@@ -40,6 +40,7 @@ echo "Configuring with CMake..."
 cmake -B build \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_TOOLCHAIN_FILE="$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" \
+    -DUSE_VCPKG_DEPENDENCIES=ON \
     -DBUILD_BENCHMARKS=ON
 
 echo ""
