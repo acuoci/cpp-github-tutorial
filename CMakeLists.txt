@@ -1,4 +1,11 @@
 cmake_minimum_required(VERSION 3.15)
+
+# Set vcpkg toolchain file before project()
+if(DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
+  set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+      CACHE STRING "")
+endif()
+
 project(MathLib VERSION 1.0.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -13,12 +20,20 @@ option(ENABLE_CLANG_TIDY "Enable clang-tidy checks" OFF)
 option(ENABLE_CPPCHECK "Enable cppcheck checks" OFF)
 option(ENABLE_SANITIZERS "Enable sanitizers (ASan, UBSan)" OFF)
 
+# Find packages from vcpkg
+find_package(fmt CONFIG REQUIRED)
+find_package(spdlog CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
+
+message(STATUS "Found fmt: ${fmt_VERSION}")
+message(STATUS "Found spdlog: ${spdlog_VERSION}")
+message(STATUS "Found nlohmann_json: ${nlohmann_json_VERSION}")
+
 # Clang-Tidy integration (ONLY for library, not tests/benchmarks)
 if(ENABLE_CLANG_TIDY)
     find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
     if(CLANG_TIDY_EXE)
         message(STATUS "clang-tidy found: ${CLANG_TIDY_EXE}")
-        # We'll apply this selectively to the library only
         set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}")
     else()
         message(WARNING "clang-tidy requested but not found")
@@ -37,7 +52,7 @@ if(ENABLE_CPPCHECK)
             "--force"
             "--inline-suppr"
             "--suppressions-list=${CMAKE_SOURCE_DIR}/.cppcheck-suppressions"
-            "--error-exitcode=0"  # Don't fail build, just warn
+            "--error-exitcode=0"
         )
     else()
         message(WARNING "cppcheck requested but not found")
@@ -45,8 +60,20 @@ if(ENABLE_CPPCHECK)
 endif()
 
 # Library
-add_library(mathlib src/mathlib.cpp)
+add_library(mathlib 
+    src/mathlib.cpp
+    src/logger.cpp
+)
+
 target_include_directories(mathlib PUBLIC src)
+
+# Link vcpkg dependencies
+target_link_libraries(mathlib 
+    PUBLIC 
+        fmt::fmt
+        spdlog::spdlog
+        nlohmann_json::nlohmann_json
+)
 
 # Apply static analysis ONLY to library
 if(ENABLE_CLANG_TIDY AND CLANG_TIDY_COMMAND)
@@ -68,8 +95,8 @@ if(ENABLE_COVERAGE)
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(mathlib PUBLIC
             --coverage
-            -O0        # No optimization for accurate coverage
-            -g         # Debug symbols
+            -O0
+            -g
         )
         target_link_libraries(mathlib PUBLIC --coverage)
     endif()
@@ -90,20 +117,19 @@ if(ENABLE_SANITIZERS)
         target_compile_options(mathlib PUBLIC ${SANITIZER_FLAGS})
         target_link_libraries(mathlib PUBLIC ${SANITIZER_FLAGS})
         
-        # Additional UBSan options
         target_compile_options(mathlib PUBLIC
-            -fno-sanitize-recover=all  # Abort on UB instead of continuing
+            -fno-sanitize-recover=all
         )
     else()
         message(WARNING "Sanitizers requested but not supported by this compiler")
     endif()
 endif()
 
-# Testing (NO clang-tidy/cppcheck)
+# Testing
 enable_testing()
 add_subdirectory(tests)
 
-# Benchmarking (NO clang-tidy/cppcheck)
+# Benchmarking
 option(BUILD_BENCHMARKS "Build performance benchmarks" ON)
 if(BUILD_BENCHMARKS)
     message(STATUS "Building benchmarks")
@@ -111,3 +137,7 @@ if(BUILD_BENCHMARKS)
 else()
     message(STATUS "Skipping benchmarks")
 endif()
+
+# Example executable to demonstrate vcpkg dependencies
+add_executable(mathlib_example examples/example.cpp)
+target_link_libraries(mathlib_example PRIVATE mathlib)

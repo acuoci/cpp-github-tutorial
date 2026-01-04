@@ -546,3 +546,47 @@ jobs:
               repo: context.repo.repo,
               body: body
             });
+
+  build-with-vcpkg:
+    name: Build with vcpkg - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Setup vcpkg (cached for speed)
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: "c8696863d371ab7f46545af73e4f1b82b6e5fcb7"
+
+      # Configure with vcpkg
+      - name: Configure CMake
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake \
+            -DBUILD_BENCHMARKS=ON
+
+      # Build
+      - name: Build
+        run: cmake --build build --config Release
+
+      # Run tests
+      - name: Run tests
+        run: ctest --test-dir build --build-config Release --output-on-failure
+
+      # Run example (to verify dependencies work)
+      - name: Run example
+        run: ./build/mathlib_example
+        if: runner.os != 'Windows'
+
+      - name: Run example (Windows)
+        run: .\build\Release\mathlib_example.exe
+        if: runner.os == 'Windows'
