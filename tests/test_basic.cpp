@@ -1,5 +1,6 @@
-#include <catch2/catch_test_macros.hpp>
 #include "mathlib.h"
+
+#include <catch2/catch_test_macros.hpp>
 
 // Simple test cases
 TEST_CASE("Square function works correctly", "[square]") {
