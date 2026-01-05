@@ -1,0 +1,270 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: "Version bump type"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+jobs:
+  # Determine if we should create a release
+  check-release:
+    name: Check if Release Needed
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      new_version: ${{ steps.version.outputs.new_version }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history for changelog
+
+      - name: Check for release commits
+        id: check
+        run: |
+          # Check if there are any commits with release keywords since last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          if [ -z "$LAST_TAG" ]; then
+            echo "No previous tags, creating first release"
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          else
+            # Check for commits with feat:, fix:, or breaking: since last tag
+            COMMITS=$(git log ${LAST_TAG}..HEAD --oneline)
+            
+            if echo "$COMMITS" | grep -qE "^[a-f0-9]+ (feat|fix|docs|style|refactor|perf|test|build|ci|chore)(\(.+\))?!?:"; then
+              echo "Found release-worthy commits"
+              echo "should_release=true" >> $GITHUB_OUTPUT
+            else
+              echo "No release-worthy commits found"
+              echo "should_release=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Calculate new version
+        id: version
+        if: steps.check.outputs.should_release == 'true'
+        run: |
+          # Get last tag or default to v0.0.0
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          VERSION=${LAST_TAG#v}  # Remove 'v' prefix
+
+          # Parse version
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+
+          # Determine bump type
+          BUMP_TYPE="${{ github.event.inputs.version_bump }}"
+
+          # If manual trigger, use selected bump
+          if [ -n "$BUMP_TYPE" ]; then
+            case $BUMP_TYPE in
+              major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+              minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+              patch) PATCH=$((PATCH + 1)) ;;
+            esac
+          else
+            # Auto-detect from commits
+            COMMITS=$(git log ${LAST_TAG}..HEAD --oneline)
+            
+            if echo "$COMMITS" | grep -qE "BREAKING CHANGE|^[a-f0-9]+ \w+(\(.+\))?!:"; then
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+            elif echo "$COMMITS" | grep -qE "^[a-f0-9]+ feat(\(.+\))?:"; then
+              MINOR=$((MINOR + 1))
+              PATCH=0
+            else
+              PATCH=$((PATCH + 1))
+            fi
+          fi
+
+          NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "New version: $NEW_VERSION"
+
+  # Build release artifacts
+  build-release:
+    name: Build Release Artifacts
+    needs: check-release
+    if: needs.check-release.outputs.should_release == 'true'
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            artifact_name: mathlib-linux-x64
+            build_type: Release
+          - os: macos-latest
+            artifact_name: mathlib-macos-arm64
+            build_type: Release
+          - os: windows-latest
+            artifact_name: mathlib-windows-x64
+            build_type: Release
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure CMake
+        run: cmake -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.build_type }}
+
+      - name: Run tests
+        run: ctest --test-dir build --build-config ${{ matrix.build_type }} --output-on-failure
+
+      - name: Package artifacts (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p release
+          cp build/libmathlib.a release/
+          cp src/mathlib.h release/
+          cp README.md release/
+          cp LICENSE release/ || touch release/LICENSE
+          tar -czf ${{ matrix.artifact_name }}.tar.gz -C release .
+
+      - name: Package artifacts (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir release
+          copy build\Release\mathlib.lib release\ 2>nul || copy build\mathlib.lib release\
+          copy src\mathlib.h release\
+          copy README.md release\
+          copy LICENSE release\ 2>nul || echo. > release\LICENSE
+          Compress-Archive -Path release\* -DestinationPath ${{ matrix.artifact_name }}.zip
+
+      - name: Upload artifact (Unix)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}.tar.gz
+
+      - name: Upload artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}.zip
+
+  # Create GitHub release
+  create-release:
+    name: Create GitHub Release
+    needs: [check-release, build-release]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          VERSION="${{ needs.check-release.outputs.new_version }}"
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          if [ -z "$LAST_TAG" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="${LAST_TAG}..HEAD"
+          fi
+
+          # Generate changelog
+          {
+            echo "## What's Changed"
+            echo ""
+            
+            # Features
+            FEATURES=$(git log $RANGE --oneline | grep -E "^[a-f0-9]+ feat(\(.+\))?:" || true)
+            if [ -n "$FEATURES" ]; then
+              echo "### ✨ Features"
+              echo "$FEATURES" | sed 's/^[a-f0-9]* /- /'
+              echo ""
+            fi
+            
+            # Fixes
+            FIXES=$(git log $RANGE --oneline | grep -E "^[a-f0-9]+ fix(\(.+\))?:" || true)
+            if [ -n "$FIXES" ]; then
+              echo "### 🐛 Bug Fixes"
+              echo "$FIXES" | sed 's/^[a-f0-9]* /- /'
+              echo ""
+            fi
+            
+            # Performance
+            PERF=$(git log $RANGE --oneline | grep -E "^[a-f0-9]+ perf(\(.+\))?:" || true)
+            if [ -n "$PERF" ]; then
+              echo "### ⚡ Performance"
+              echo "$PERF" | sed 's/^[a-f0-9]* /- /'
+              echo ""
+            fi
+            
+            # Documentation
+            DOCS=$(git log $RANGE --oneline | grep -E "^[a-f0-9]+ docs(\(.+\))?:" || true)
+            if [ -n "$DOCS" ]; then
+              echo "### 📚 Documentation"
+              echo "$DOCS" | sed 's/^[a-f0-9]* /- /'
+              echo ""
+            fi
+            
+            # Full changelog
+            echo "### 📝 All Changes"
+            git log $RANGE --oneline | sed 's/^[a-f0-9]* /- /'
+            
+          } > CHANGELOG.md
+
+          cat CHANGELOG.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.check-release.outputs.new_version }}
+          name: Release ${{ needs.check-release.outputs.new_version }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update version in CMakeLists.txt
+        run: |
+          VERSION="${{ needs.check-release.outputs.new_version }}"
+          VERSION_NO_V="${VERSION#v}"
+          sed -i "s/VERSION [0-9]\+\.[0-9]\+\.[0-9]\+/VERSION $VERSION_NO_V/" CMakeLists.txt
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CMakeLists.txt
+          git commit -m "chore: bump version to ${{ needs.check-release.outputs.new_version }} [skip ci]" || true
+          git push || true
