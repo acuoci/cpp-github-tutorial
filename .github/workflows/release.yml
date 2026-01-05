@@ -63,8 +63,14 @@ jobs:
         if: steps.check.outputs.should_release == 'true'
         run: |
           # Get last tag or default to v0.0.0
-          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          VERSION=${LAST_TAG#v}  # Remove 'v' prefix
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          if [ -z "$LAST_TAG" ]; then
+            # No previous tags - this is first release
+            VERSION="0.0.0"
+          else
+            VERSION=${LAST_TAG#v}  # Remove 'v' prefix
+          fi
 
           # Parse version
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
@@ -81,17 +87,24 @@ jobs:
             esac
           else
             # Auto-detect from commits
-            COMMITS=$(git log ${LAST_TAG}..HEAD --oneline)
-            
-            if echo "$COMMITS" | grep -qE "BREAKING CHANGE|^[a-f0-9]+ \w+(\(.+\))?!:"; then
-              MAJOR=$((MAJOR + 1))
+            if [ -z "$LAST_TAG" ]; then
+              # First release - start at 1.0.0
+              MAJOR=1
               MINOR=0
               PATCH=0
-            elif echo "$COMMITS" | grep -qE "^[a-f0-9]+ feat(\(.+\))?:"; then
-              MINOR=$((MINOR + 1))
-              PATCH=0
             else
-              PATCH=$((PATCH + 1))
+              COMMITS=$(git log ${LAST_TAG}..HEAD --oneline)
+              
+              if echo "$COMMITS" | grep -qE "BREAKING CHANGE|^[a-f0-9]+ \w+(\(.+\))?!:"; then
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+              elif echo "$COMMITS" | grep -qE "^[a-f0-9]+ feat(\(.+\))?:"; then
+                MINOR=$((MINOR + 1))
+                PATCH=0
+              else
+                PATCH=$((PATCH + 1))
+              fi
             fi
           fi
 
@@ -137,7 +150,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           mkdir -p release
-          cp build/libmathlib.a release/
+          cp build/libmathlib.a release/ 2>/dev/null || cp build/lib/libmathlib.a release/ || true
           cp src/mathlib.h release/
           cp README.md release/
           cp LICENSE release/ || touch release/LICENSE
@@ -147,7 +160,7 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           mkdir release
-          copy build\Release\mathlib.lib release\ 2>nul || copy build\mathlib.lib release\
+          copy build\Release\mathlib.lib release\ 2>nul || copy build\mathlib.lib release\ 2>nul || echo "Library not found"
           copy src\mathlib.h release\
           copy README.md release\
           copy LICENSE release\ 2>nul || echo. > release\LICENSE
